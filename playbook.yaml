@@ -243,7 +243,7 @@
      
     - name: Port forward service todo-service
       become: no 
-      command: kubectl port-forward svc/todo-service 3000:3000 --address 0.0.0.0 & 
+      command: kubectl port-forward svc/todo-service 3000:3000 --address 0.0.0.0  
       
     
       

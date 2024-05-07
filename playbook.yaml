@@ -81,19 +81,7 @@
       apt:
         name: python3-docker
         state: present
-     
-    - name: create docker image 
-      docker_image: 
-        name: getting-started
-        build:
-          path: /home/ubuntu/getting-started-app
-        source: build
-        
-    - name: download mySQL image
-      docker_image:
-        name: mysql
-        source: pull
-        
+         
     - name: install Minikube pre-requisits
       apt:
         name:
@@ -119,9 +107,23 @@
     - name: enable ingress addon 
       command: minikube addons enable ingress 
       become: no
+
+    - name: create docker image 
+      docker_image: 
+        name: getting-started
+        build:
+          path: /home/ubuntu/getting-started-app
+        source: build
+      become: no
+      
+    - name: download mySQL image
+      docker_image:
+        name: mysql
+        source: pull
+      become: no
       
     - name: Apply Deployment for todo-app
-      become: no 
+      become: no
       k8s:
         state: present
         definition:
@@ -148,7 +150,7 @@
                       - containerPort: 3000
 
     - name: Create PersistentVolumeClaim for mysql
-      become: no 
+      become: no
       k8s:
         state: present
         definition:
@@ -165,7 +167,7 @@
                 storage: 1Gi
 
     - name: Apply Deployment for mysql
-      become: no 
+      become: no
       k8s:
         state: present
         definition:
@@ -199,7 +201,7 @@
                       claimName: mysql-pvc
 
     - name: Create Service for todo-app
-      become: no 
+      become: no
       k8s:
         state: present
         definition:
@@ -218,7 +220,7 @@
                 nodePort: 31000
 
     - name: Create Ingress for todo-app
-      become: no 
+      become: no
       k8s:
         state: present
         definition:
@@ -241,9 +243,7 @@
                           port:
                             number: 3000
      
-    - name: Port forward service todo-service
-      become: no 
-      command: kubectl port-forward svc/todo-service 3000:3000 --address 0.0.0.0  
+ 
       
     
       

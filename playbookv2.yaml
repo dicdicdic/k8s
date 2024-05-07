@@ -1,0 +1,245 @@
+---
+- name: Automatic deployment of ToDo app
+  hosts: worker 
+  become: yes
+
+  tasks:
+    - name: Update apt package
+      apt:
+        update_cache: yes
+
+    - name: Install ca-certificates and curl 
+      apt:
+        name:
+          - ca-certificates
+          - curl
+        state: present
+  
+    - name: Create keyrings directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory       
+        mode: "0755"
+
+    - name: Download GPG key 
+      get_url: 
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0755"
+    
+    - name: Add Docker repository to APT sources
+      shell: |
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+      become: yes
+    
+    - name: update apt cache
+      apt:
+        update_cache: yes
+    
+    - name: install docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present 
+         
+    - name: install git 
+      apt:
+        name: git 
+        state: present 
+
+    - name: clone todo repo
+      git: 
+        repo: https://github.com/docker/getting-started-app.git
+        dest: /home/ubuntu/getting-started-app 
+    
+    - name: create docker file
+      file: 
+        dest: /home/ubuntu/getting-started-app/Dockerfile
+        state: touch
+ 
+    - name: modify docker file
+      blockinfile:
+        path: /home/ubuntu/getting-started-app/Dockerfile
+        block: |
+          # suntax=docker/dockerfile:1
+          FROM node:18-alpine
+          COPY . . 
+          RUN yarn install --production 
+          CMD ["node", "src/index.js"]
+          EXPOSE 3000
+
+    - name: Install python3-pip
+      apt:
+        name: python3-pip
+        state: present
+
+    - name: Install Docker SDK for Python
+      apt:
+        name: python3-docker
+        state: present
+         
+    - name: install Minikube pre-requisits
+      apt:
+        name:
+          - curl
+          - ca-certificates
+          - apt-transport-https
+        state: present
+      
+    - name: Download Minikube binary
+      get_url:
+        url: "https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64"
+        dest: "/tmp/minikube-linux-amd64"
+
+    - name: Install Minikube
+      command: "install /tmp/minikube-linux-amd64 /usr/local/bin/minikube"
+      args:
+        creates: "/usr/local/bin/minikube"
+        
+    - name: create cluster using docker as driver 
+      shell: minikube start --driver=docker 
+      become: no
+
+    - name: enable ingress addon 
+      command: minikube addons enable ingress 
+      become: no
+
+    - name: create docker image 
+      docker_image: 
+        name: getting-started
+        build:
+          path: /home/ubuntu/getting-started-app
+        source: build
+      become: no
+      
+    - name: download mySQL image
+      docker_image:
+        name: mysql
+        source: pull
+      become: no
+      
+    - name: Apply Deployment for todo-app
+      become: no
+      k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: todo-app
+            namespace: "{{ namespace }}"
+          spec:
+            replicas: "{{ todoreplicas }}"
+            selector:
+              matchLabels:
+                app: "{{ todolabel }}"
+            template:
+              metadata:
+                labels:
+                  app: "{{ todolabel }}"
+              spec:
+                containers:
+                  - name: "{{ todolabel }}"
+                    image: getting-started
+                    imagePullPolicy: IfNotPresent
+                    ports:
+                      - containerPort: 3000
+
+    - name: Create PersistentVolumeClaim for mysql
+      become: no
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: mysql-pvc
+            namespace: "{{ namespace }}"
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 1Gi
+
+    - name: Apply Deployment for mysql
+      become: no
+      k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: mysql
+            namespace: "{{ namespace }}"
+          spec:
+            replicas: "{{ mysqlreplicas }}"
+            selector:
+              matchLabels:
+                app: "{{ mysqllabel }}"
+            template:
+              metadata:
+                labels:
+                  app: "{{ mysqllabel }}"
+              spec:
+                containers:
+                  - name: "{{ mysqllabel }}"
+                    image: mysql
+                    env:
+                      - name: MYSQL_ALLOW_EMPTY_PASSWORD
+                        value: "true"
+                    volumeMounts:
+                      - name: mysql-pvc
+                        mountPath: /var/lib/mysql
+                volumes:
+                  - name: mysql-pvc
+                    persistentVolumeClaim:
+                      claimName: mysql-pvc
+
+    - name: Create Service for todo-app
+      become: no
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: todo-service
+            namespace: "{{ namespace }}"
+          spec:
+            selector:
+              app: "{{ todolabel }}"
+            type: NodePort
+            ports:
+              - port: 3000
+                targetPort: 3000
+                nodePort: 31000
+
+    - name: Create Ingress for todo-app
+      become: no
+      k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: todo-ingress
+            namespace: "{{ namespace }}"
+            annotations:
+          spec:
+            rules:
+              - host: k8sdemo.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: todo-service
+                          port:
+                            number: 3000
+     

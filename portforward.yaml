@@ -1,0 +1,10 @@
+--- 
+- name: testing portforward
+  hosts: worker 
+  become: no
+
+  tasks:
+    - name: PortForward
+      command: kubectl port-forward svc/todo-service 3000:3000 --address 0.0.0.0
+      async: 0 
+      poll: 0 
